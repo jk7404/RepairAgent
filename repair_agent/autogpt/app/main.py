@@ -2,6 +2,7 @@
 import enum
 import logging
 import math
+import os
 import signal
 import sys
 from pathlib import Path
@@ -22,17 +23,14 @@ from autogpt.app.utils import (
     markdown_to_ansi_style,
 )
 from autogpt.commands import COMMAND_CATEGORIES
-from autogpt.config import AIConfig, Config, ConfigBuilder, check_openai_api_key
+from autogpt.config import AIConfig, Config, ConfigBuilder, check_openai_api_key, set_api_token
 from autogpt.llm.api_manager import ApiManager
 from autogpt.logs import logger
-from autogpt.memory.vector import get_memory
 from autogpt.models.command_registry import CommandRegistry
-from autogpt.plugins import scan_plugins
 from autogpt.prompts.prompt import DEFAULT_TRIGGERING_PROMPT
-from autogpt.speech import say_text
 from autogpt.workspace import Workspace
 from scripts.install_plugin_deps import install_plugin_dependencies
-
+import set_api_key
 
 def run_auto_gpt(
     continuous: bool,
@@ -62,14 +60,15 @@ def run_auto_gpt(
     # Configure logging before we do anything else.
     logger.set_level(logging.DEBUG if debug else logging.INFO)
 
-    config = ConfigBuilder.build_config_from_env(workdir=working_directory)
+    config = Config()
 
     # HACK: This is a hack to allow the config into the logger without having to pass it around everywhere
     # or import it directly.
     logger.config = config
-
+    set_api_key.api_token_setup()
+    set_api_token(config)
     # TODO: fill in llm values here
-    check_openai_api_key(config)
+    #check_openai_api_key(config)
 
     create_config(
         config,
@@ -138,8 +137,6 @@ def run_auto_gpt(
     # HACK: doing this here to collect some globals that depend on the workspace.
     config.file_logger_path = Workspace.build_file_logger_path(config.workspace_path)
 
-    config.plugins = scan_plugins(config, config.debug_mode)
-
     # Create a CommandRegistry instance and scan default folder
     command_registry = CommandRegistry.with_command_modules(COMMAND_CATEGORIES, config)
 
@@ -152,24 +149,11 @@ def run_auto_gpt(
     ai_config.command_registry = command_registry
     # print(prompt)
 
-    # add chat plugins capable of report to logger
-    if config.chat_messages_enabled:
-        for plugin in config.plugins:
-            if hasattr(plugin, "can_handle_report") and plugin.can_handle_report():
-                logger.info(f"Loaded plugin into logger: {plugin.__class__.__name__}")
-                logger.chat_plugins.append(plugin)
-
     # Initialize memory and make sure it is empty.
     # this is particularly important for indexing and referencing pinecone memory
-    memory = get_memory(config)
-    memory.clear()
-    logger.typewriter_log(
-        "Using memory of type:", Fore.GREEN, f"{memory.__class__.__name__}"
-    )
     logger.typewriter_log("Using Browser:", Fore.GREEN, config.selenium_web_browser)
 
     agent = Agent(
-        memory=memory,
         command_registry=command_registry,
         triggering_prompt=DEFAULT_TRIGGERING_PROMPT,
         ai_config=ai_config,
@@ -212,6 +196,7 @@ def run_interaction_loop(
         None
     """
     # These contain both application config and agent config, so grab them here.
+    
     config = agent.config
     ai_config = agent.ai_config
     logger.debug(f"{ai_config.ai_name} System Prompt: {str(agent.prompt_dictionary)}")
@@ -357,8 +342,6 @@ def update_user(
                 f"Error message: {command_name}",
             )
         else:
-            if config.speak_mode:
-                say_text(f"I want to execute {command_name}", config)
 
             # First log new-line so user can differentiate sections better in console
             logger.typewriter_log("\n")
@@ -448,7 +431,7 @@ def construct_main_ai_config(
     Returns:
         str: The prompt string
     """
-    ai_config = AIConfig.load(config.workdir / config.ai_settings_file)
+    ai_config = AIConfig.load(os.path.join(config.workdir,config.ai_settings_file))
 
     # Apply overrides
     if name:
@@ -530,7 +513,6 @@ def print_assistant_thoughts(
     assistant_reply_json_valid: dict,
     config: Config,
 ) -> None:
-    from autogpt.speech import say_text
 
     assistant_thoughts_reasoning = None
     assistant_thoughts_plan = None

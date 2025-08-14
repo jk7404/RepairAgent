@@ -3,6 +3,7 @@
 COMMAND_CATEGORY = "defects4j"
 COMMAND_CATEGORY_TITLE = "Run Tests"
 
+from email.mime import message
 import os
 import subprocess
 import re
@@ -14,10 +15,13 @@ import docker
 from docker.errors import DockerException, ImageNotFound
 from docker.models.containers import Container as DockerContainer
 
+from autogpt.llm.utils import create_chat_completion
 from autogpt.agents.agent import Agent
 from autogpt.command_decorator import command
 from autogpt.logs import logger
 
+from openai import OpenAI
+from google import genai
 import javalang
 from create_files_index import list_java_files
 
@@ -648,7 +652,7 @@ def write_fix(project_name:str, bug_index:int, changes_dicts: list, agent: Agent
         return "Your fix did not target all the buggy lines. Here is the list of all the buggy lines: {}. To help you, you can fill out the following the template to generate your fix {}".format(buggy_lines, fix_template)
     run_ret = execute_write_range(project_name, bug_index, changes_dicts, agent)
     if 1 == 0:
-        validation_result = validate_fix_against_hypothesis(bug_report, hypothesis, fix)
+        validation_result = validate_fix_against_hypothesis(bug_report, hypothesis, fix, agent)
         return "First, we asked an expert about the fix you made and here is what the expert said:\n" + validation_result +\
         "\nSecond, we applied your suggested fix and here are the results:\n"+\
         run_ret+\
@@ -1201,7 +1205,6 @@ def lsp_hover(name:str, index:str, file_path:str, line_number:int, column:int, a
 
 ## TO BE PUT TEMPORARILY HERE
 
-from langchain.chat_models import ChatOpenAI
 from langchain.schema.messages import HumanMessage, SystemMessage, AIMessage
 
 """@command(
@@ -1218,47 +1221,34 @@ from langchain.schema.messages import HumanMessage, SystemMessage, AIMessage
 )
 """
 def ask_chatgpt(question: str, agent: Agent):
-    chat = ChatOpenAI(openai_api_key="API-KEY-PLACEHOLDER")
-
-    if not agent.ask_chatgpt:
-        messages = [
-        SystemMessage(content="You're a helpful assistant who answer questions mostly related to programming, software, debugging, code repair, code generation, code impelementation in all possible languages, you also a big base of knowledge regarding programming and software.\
-If the details in the given quetion are not enough, you should ask the user to add more details and ask again."),
-        HumanMessage(content=question),
-    ]
-        agent.ask_chatgpt = messages
+    message = "You're a helpful assistant who answer questions mostly related to programming, software, debugging, code repair, code generation, code impelementation in all possible languages, you also a big base of knowledge regarding programming and software.\
+If the details in the given quetion are not enough, you should ask the user to add more details and ask again." + question
+    if "google" in agent.config.openai_api_base: # Gemini version
+        client = genai.Client(api_key=agent.config.openai_api_key)
     else:
-        messages = agent.ask_chatgpt
-        messages.append(HumanMessage(content=question))
+        client = OpenAI(api_key=agent.config.openai_api_key)
+    response = create_chat_completion(
+                        client,
+                        message,
+                        agent.config.llm_model,
+                    )
+    
+    return response
 
-    response = chat.invoke(messages)
-    agent.ask_chatgpt.append(response)
-
-    return response.content
-
-def validate_fix_against_hypothesis(bug_report, hypothesis, fix, model = "gpt-4o-mini"):
-    chat = ChatOpenAI(openai_api_key="API-KEY-PLACEHOLDER", model=model)
-
-    messages = [
-        SystemMessage(
-            content="You are a helpful assitant in coding and debugging tasks." +\
+def validate_fix_against_hypothesis(bug_report, hypothesis, fix, agent, model = "gpt-4o-mini"):
+    messages = "You are a helpful assistant in coding and debugging tasks." +\
                     "Particularly, you will be given some information about a bug," +\
                     "a hypothesis about the bug made by a person and the fix suggested by that person."+\
                     "Based on the given information, you should check whether the suggested fix is consistent with hypothesis."+\
-                    "In case the fix does not reflect the hypothesis or it contradicts the information given about the bug, you should explain and suggest a better fix."
-                    ),
-        HumanMessage(
-            content=bug_report + "\n" +\
+                    "In case the fix does not reflect the hypothesis or it contradicts the information given about the bug, you should explain and suggest a better fix."+\
+                    bug_report + "\n" +\
                      "## Hypothesis\n"+\
                      f"{hypothesis}\n"+\
                      "## Suggested fix\n"+\
                      f"{fix}\n"+\
                      "Is the fix consistent with the hypothesis? Does the hypothesis about the bug make sense? Also, check if the lines numbers are consistent or not and if some lines are unncessarily changed or rewritten. For example, if the buggy line is line 445, it would make sense to change that line only. If not, explain why and suggest a correction. Keep your answer very short and concise."
-            )  
-    ]
-    response = chat.invoke(messages)
 
-    return response.content
+    return ask_chatgpt(messages, agent)
 
 def remove_comments(java_code):
     # Remove both single-line and multi-line comments
@@ -1560,18 +1550,11 @@ def extract_function_def_context(project_name, bug_index, method_name, filepath,
 )
 def auto_complete_functions(project_name, bug_index, filepath, method_name, agent, model="gpt-4o-mini"):
     context = extract_function_def_context(project_name, bug_index, method_name, filepath, agent)
-    chat = ChatOpenAI(openai_api_key="API-KEY-PLACEHOLDER", model=model)
-    messages = [
-            SystemMessage(
-                content="You are a code implementer and autocompletion engine. Basically, you would be given some already written code up to some line and you would be asked to implement the function/method that is declared at the last line. Always give full implementation of the method starting from declaration (public void myFunc(...)) to all the body. Take the given context into considration. Only give the implementation of the method and nothing else. If you want to add some explanation you can write it as comments above each line of code."),
-            HumanMessage(
-                content="Implement the code for the method {}. Here is the code preceeding the method definition:\n{}".format(method_name, context))
-        ]
-        #response_format={ "type": "json_object" }
-    response = chat.invoke(messages)
-    return response.content
+    content="You are a code implementer and autocompletion engine. Basically, you would be given some already written code up to some line and you would be asked to implement the function/method that is declared at the last line. Always give full implementation of the method starting from declaration (public void myFunc(...)) to all the body. Take the given context into considration. Only give the implementation of the method and nothing else. If you want to add some explanation you can write it as comments above each line of code."+\
+            "Implement the code for the method {}. Here is the code preceeding the method definition:\n{}".format(method_name, context)
+    from autogpt.llm.utils import ask_chatgpt
+    return ask_chatgpt(content)
 
-from fuzzywuzzy import fuzz
 def apply_changes(change_dict):
     file_name = change_dict.get("file_name", "")
     insertions = change_dict.get("insertions", [])
@@ -1594,8 +1577,6 @@ def apply_changes(change_dict):
         modified_line = modification.get("modified_line", "")
         if 1 <= int(line_number) <= len(lines):
             orig_line = lines[int(line_number) - 1]
-            if fuzz.ratio(orig_line, modified_line) < 70:
-                continue
             if modified_line.endswith("\n"):
                 lines[int(line_number) - 1] = modified_line
             else:

@@ -1,0 +1,41 @@
+# Core Application Dependencies
+colorama
+distro
+python-dotenv
+pyyaml
+python-docx
+markdown
+readability-lxml
+requests
+tiktoken
+docker
+duckduckgo-search
+google-api-python-client # (https://developers.google.com/custom-search/v1/overview)
+redis
+selenium
+webdriver-manager
+jsonschema
+click
+spacy
+prompt_toolkit
+pydantic
+langchain
+antlr4-python3-runtime
+google-genai
+
+# OpenAI and Generic plugins import
+openai
+openapi-python-client
+
+# Data processing and reporting
+javalang
+prettytable
+reportlab
+matplotlib
+venn
+pandas
+
+# Web Server
+fastapi
+uvicorn
+gitpython

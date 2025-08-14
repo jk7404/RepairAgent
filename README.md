@@ -331,7 +331,7 @@ This part is about running RepairAgent on full evaluation datasets to replicate 
 
 2. Run RepairAgent on each of the batches (either singularly or concurrently)
     ```bash
-    ./run_on_defects4j.sh experimental_setups/batches/0 hyperparameters.json
+    ./run_on_defects4j.sh experimental_setups/batches/0 hyperparams.json
     # replace 0 with the desired batch number
     ```
 

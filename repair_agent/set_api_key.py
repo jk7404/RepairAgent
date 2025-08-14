@@ -1,43 +1,58 @@
 import os
+import sys
 
-def replace_placeholder(file_path, placeholder, new_value):
+from dotenv import load_dotenv
+
+def api_token_setup():
     """
-    Replace all occurrences of a placeholder in a file with a new value.
+    Sets up API key, base URL, and LLM model as environment variables for builDroid
+    by loading from a .env file.
     """
-    try:
-        with open(file_path, 'r') as file:
-            content = file.read()
+    cwd = os.getcwd()
+    env_path = os.path.join(cwd, '.env')
 
-        updated_content = content.replace(placeholder, new_value)
+    # Check if the file exists and is a file before trying to load it.
+    if os.path.isfile(env_path):
+        # Directly provide the confirmed path to load_dotenv.
+        load_dotenv(dotenv_path=env_path)
+    else:
+        # This will now only trigger if the file is truly missing or is a directory.
+        print("Warning: .env file not found in the current directory. Relying on pre-set environment variables.", file=sys.stderr)
 
-        with open(file_path, 'w') as file:
-            file.write(updated_content)
+    if not os.getenv("API_KEY"):
+        print("Error: API_KEY not found in .env file or environment variables.", file=sys.stderr)
+        print("Please create a .env file in the project root with at least API_KEY=<your_key_here>.", file=sys.stderr)
+        sys.exit(1)
 
-        print(f"Updated {placeholder} in {file_path}")
-    except Exception as e:
-        print(f"Failed to update {file_path}: {e}")
+    print("LLM configuration loaded successfully.")
 
+    base_url_env = os.getenv("BASE_URL")
+    llm_model_env = os.getenv("LLM_MODEL")
 
-def main():
-    files_and_placeholders = [
-        ("autogpt/commands/defects4j_static.py", "API-KEY-PLACEHOLDER"),
-        ("autogpt/commands/defects4j.py", "API-KEY-PLACEHOLDER"),
-        ("autogpt/.env", "GLOBAL-API-KEY-PLACEHOLDER"),
-        ("run.sh", "GLOBAL-API-KEY-PLACEHOLDER"),
-        (".env", "GLOBAL-API-KEY-PLACEHOLDER"),
-    ]
+    if base_url_env:
+        print(f"Provider: {base_url_env}")
+    else:
+        print("Provider: OpenAI default")
 
-    print("Please provide your OpenAI API-KEY.")
-    replacement_value = input("OpenAI API-KEY: ").strip()
+    if llm_model_env:
+        print(f"Model: {llm_model_env}")
+    else:
+        if not base_url_env:
+            llm_model = "gpt-4.1-mini"
+        elif "google" in base_url_env:
+            llm_model = "gemini-2.0-flash-lite"
+        else:
+            llm_model = "gpt-4.1-mini"
+        os.environ["LLM_MODEL"] = llm_model
+        print(f"Model: Not specified, default: {llm_model}")
 
-    # Save the replacement value to token.txt
-    with open("token.txt", "w") as token_file:
-        token_file.write(replacement_value)
-
-    # Replace placeholders in files
-    for file_path, placeholder in files_and_placeholders:
-        replace_placeholder(file_path, placeholder, replacement_value)
-
-
-if __name__ == "__main__":
-    main()
+def api_token_reset():
+    """
+    Resets api key, base url, and llm model environment variables.
+    """
+    if "API_KEY" in os.environ:
+        del os.environ["API_KEY"]
+    if "BASE_URL" in os.environ:
+        del os.environ["BASE_URL"]
+    if "LLM_MODEL" in os.environ:
+        del os.environ["LLM_MODEL"]

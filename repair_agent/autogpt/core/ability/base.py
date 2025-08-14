@@ -2,7 +2,6 @@ import abc
 from pprint import pformat
 from typing import Any, ClassVar
 
-import inflection
 from pydantic import Field
 
 from autogpt.core.ability.schema import AbilityResult
@@ -26,11 +25,6 @@ class Ability(abc.ABC):
     """A class representing an agent ability."""
 
     default_configuration: ClassVar[AbilityConfiguration]
-
-    @classmethod
-    def name(cls) -> str:
-        """The name of the ability."""
-        return inflection.underscore(cls.__name__)
 
     @classmethod
     @abc.abstractmethod

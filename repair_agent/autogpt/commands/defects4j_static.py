@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import json
 from autogpt.logs import logger
+from autogpt.prompts import prompt
 
 
 STATIC_MODEL = "gpt-4o-mini"
@@ -326,46 +327,7 @@ def extract_fail_report(name: str, index: str, workspace):
     return "There are {} failing test cases, here is the full log of failing cases:\n".format(len(failing_test_cases))+\
         "\n\n".join(["\n".join(ftc) for ftc in failing_test_cases])
 
-from langchain.chat_models import ChatOpenAI
 from langchain.schema.messages import HumanMessage, SystemMessage, AIMessage
-
-def query_for_fix(query, model=STATIC_MODEL):
-    chat = ChatOpenAI(openai_api_key="API-KEY-PLACEHOLDER", model=model)
-
-    messages = [
-        SystemMessage(
-            content="You are an automated program repair agent who suggests fixes to given bugs." +\
-                    "Particularly, you will be given some information about a bug." +\
-                    "Your task is to suggest a list of possible fixes for the given bug. Usually, the given information contains an approximate location of the bug. Respect the fix format described below. Output a json parsable output enclosed in a list."
-                    ),
-        HumanMessage(
-            content=query
-            )  
-    ]
-    response = chat.invoke(messages)
-
-    return response.content
-
-def query_for_mutants(query, model=STATIC_MODEL):
-    chat = ChatOpenAI(openai_api_key="API-KEY-PLACEHOLDER", model=model)
-
-    messages = [
-        SystemMessage(
-            content="You are a code assitant and program repair agent who suggests fixes to given bugs." +\
-                    "Particularly, you will be given some information about a bug." +\
-                    "Your task is to suggest a list of possible mutations of the buggy code. Probably mutating it a little bit would fix the bug."+\
-                    "Use the information that I give you and also your general knowledge of similar code snippets or bug fixes that you know of."+\
-                    "Respect the fix format, described below, for every mutant that you generate."
-                    ),
-        HumanMessage(
-            content=query
-            )  
-    ]
-    #response_format={ "type": "json_object" }
-    response = chat.invoke(messages)
-
-    return response.content
-
 
 def construct_fix_command(fix_object, project_name, bug_index):
     if isinstance(fix_object, dict):
@@ -391,23 +353,6 @@ def construct_fix_command(fix_object, project_name, bug_index):
                 }
             }
         }
-
-
-def query_for_commands(query, model=STATIC_MODEL):
-    chat = ChatOpenAI(openai_api_key="API-KEY-PLACEHOLDER", model=model)
-
-    messages = [
-        SystemMessage(
-            content="I have a set of functions that help me analyze and repair buggy code. I will give you the description of the functions (I also call them commands), and the buggy piece of code and tell me what commands would make sense to call to get more info about the bug."
-                    ),
-        HumanMessage(
-            content=query
-            )  
-    ]
-    #response_format={ "type": "json_object" }
-    response = chat.invoke(messages)
-
-    return response.content
 
 def list_java_files(main_dir) -> list:
     directory = main_dir
@@ -500,18 +445,10 @@ def extract_function_def_context(project_name, bug_index, method_name, file_path
         return enc.decode(context[-input_limit:])
     
 def auto_complete_functions(project_name, bug_index, file_path, method_name, model=STATIC_MODEL):
+    from autogpt.llm.utils import ask_chatgpt
     context = extract_function_def_context(project_name, bug_index, method_name, file_path)
-    chat = ChatOpenAI(openai_api_key="API-KEY-PLACEHOLDER", model=model)
-    messages = [
-            SystemMessage(
-                content="implement the code for the method {}, here is the code before the method:".format(method_name)),
-            HumanMessage(
-                content=context
-                )  
-        ]
-        #response_format={ "type": "json_object" }
-    response = chat.invoke(messages)
-    return response.content
+    content="implement the code for the method {}, here is the code before the method:".format(method_name) + context
+    return ask_chatgpt(content)
 
 def extract_command(
     assistant_reply_json: dict, assistant_reply, config

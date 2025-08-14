@@ -8,13 +8,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 import yaml
-from auto_gpt_plugin_template import AutoGPTPluginTemplate
 from colorama import Fore
 from pydantic import Field, validator
 
 from autogpt.core.configuration.schema import Configurable, SystemSettings
-from autogpt.llm.providers.openai import OPEN_AI_CHAT_MODELS
-from autogpt.plugins.plugins_config import PluginsConfig
 
 AI_SETTINGS_FILE = "ai_settings.yaml"
 AZURE_CONFIG_FILE = "azure.yaml"
@@ -50,12 +47,13 @@ class Config(SystemSettings, arbitrary_types_allowed=True):
     # Paths
     ai_settings_file: str = AI_SETTINGS_FILE
     prompt_settings_file: str = PROMPT_SETTINGS_FILE
-    workdir: Path = None
+    workdir: Path = os.getcwd()
     workspace_path: Optional[Path] = None
     file_logger_path: Optional[Path] = None
     # Model configuration
     fast_llm: str = "gpt-3.5-turbo-0125"
     smart_llm: str = "gpt-4-0314"
+    llm_model: str = None
     temperature: float = 0
     openai_functions: bool = False
     embedding_model: str = "text-embedding-ada-002"
@@ -105,10 +103,7 @@ class Config(SystemSettings, arbitrary_types_allowed=True):
     ###################
     plugins_dir: str = "plugins"
     plugins_config_file: str = PLUGINS_CONFIG_FILE
-    plugins_config: PluginsConfig = Field(
-        default_factory=lambda: PluginsConfig(plugins={})
-    )
-    plugins: list[AutoGPTPluginTemplate] = Field(default_factory=list, exclude=True)
+    plugins: list[str] = Field(default_factory=list, exclude=True)
     plugins_allowlist: list[str] = Field(default_factory=list)
     plugins_denylist: list[str] = Field(default_factory=list)
     plugins_openai: list[str] = Field(default_factory=list)
@@ -147,15 +142,6 @@ class Config(SystemSettings, arbitrary_types_allowed=True):
             p.__class__.__name__ != "AutoGPTPluginTemplate"
         ), f"Plugins must subclass AutoGPTPluginTemplate; {p} is a template instance"
         return p
-
-    @validator("openai_functions")
-    def validate_openai_functions(cls, v: bool, values: dict[str, Any]):
-        if v:
-            smart_llm = values["smart_llm"]
-            assert OPEN_AI_CHAT_MODELS[smart_llm].supports_functions, (
-                f"Model {smart_llm} does not support OpenAI Functions. "
-                "Please disable OPENAI_FUNCTIONS or choose a suitable model."
-            )
 
     def get_openai_credentials(self, model: str) -> dict[str, str]:
         credentials = {
@@ -218,6 +204,11 @@ class Config(SystemSettings, arbitrary_types_allowed=True):
             kwargs["deployment_id"] = deployment_id
         return kwargs
 
+def set_api_token(config: Config) -> None:
+    """Setup api tokens for agent."""
+    config.openai_api_key = os.getenv("API_KEY", default="")
+    config.openai_api_base = os.getenv("BASE_URL", default="")
+    config.llm_model = os.getenv("LLM_MODEL", default="")
 
 class ConfigBuilder(Configurable[Config]):
     default_settings = Config()
@@ -336,12 +327,6 @@ class ConfigBuilder(Configurable[Config]):
         config = cls.build_agent_configuration(config_dict_without_none_values)
 
         # Set secondary config variables (that depend on other config variables)
-
-        config.plugins_config = PluginsConfig.load_config(
-            config.workdir / config.plugins_config_file,
-            config.plugins_denylist,
-            config.plugins_allowlist,
-        )
 
         return config
 

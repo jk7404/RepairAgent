@@ -15,7 +15,6 @@ from typing import Generator, Literal
 from autogpt.agents.agent import Agent
 from autogpt.command_decorator import command
 from autogpt.logs import logger
-from autogpt.memory.vector import MemoryItem, VectorMemory
 
 from .decorators import sanitize_path_arg
 from .file_operations_utils import read_textual_file
@@ -154,11 +153,6 @@ def read_file(filename: str, agent: Agent) -> str:
     try:
         content = read_textual_file(filename, logger)
 
-        # TODO: invalidate/update memory when file is edited
-        file_memory = MemoryItem.from_text_file(content, filename, agent.config)
-        if len(file_memory.chunks) > 1:
-            return file_memory.summary
-
         return content
     except Exception as e:
         return f"Error: {str(e)}"
@@ -166,7 +160,6 @@ def read_file(filename: str, agent: Agent) -> str:
 
 def ingest_file(
     filename: str,
-    memory: VectorMemory,
 ) -> None:
     """
     Ingest a file by reading its content, splitting it into chunks with a specified
@@ -179,13 +172,6 @@ def ingest_file(
     try:
         logger.info(f"Ingesting file {filename}")
         content = read_file(filename)
-
-        # TODO: differentiate between different types of files
-        file_memory = MemoryItem.from_text_file(content, filename)
-        logger.debug(f"Created memory: {file_memory.dump(True)}")
-        memory.add(file_memory)
-
-        logger.info(f"Ingested {len(file_memory.e_chunks)} chunks from {filename}")
     except Exception as err:
         logger.warn(f"Error while ingesting file '{filename}': {err}")
 

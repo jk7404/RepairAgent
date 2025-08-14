@@ -37,7 +37,6 @@ from webdriver_manager.microsoft import EdgeChromiumDriverManager as EdgeDriverM
 from autogpt.agents.agent import Agent
 from autogpt.command_decorator import command
 from autogpt.logs import logger
-from autogpt.memory.vector import MemoryItem, get_memory
 from autogpt.processing.html import extract_hyperlinks, format_hyperlinks
 from autogpt.url_utils.validators import validate_url
 
@@ -216,34 +215,3 @@ def add_header(driver: WebDriver) -> None:
         driver.execute_script(overlay_script)
     except Exception as e:
         print(f"Error executing overlay.js: {e}")
-
-
-def summarize_memorize_webpage(
-    url: str,
-    text: str,
-    question: str,
-    agent: Agent,
-    driver: Optional[WebDriver] = None,
-) -> str:
-    """Summarize text using the OpenAI API
-
-    Args:
-        url (str): The url of the text
-        text (str): The text to summarize
-        question (str): The question to ask the model
-        driver (WebDriver): The webdriver to use to scroll the page
-
-    Returns:
-        str: The summary of the text
-    """
-    if not text:
-        return "Error: No text to summarize"
-
-    text_length = len(text)
-    logger.info(f"Text length: {text_length} characters")
-
-    memory = get_memory(agent.config)
-
-    new_memory = MemoryItem.from_webpage(text, url, agent.config, question=question)
-    memory.add(new_memory)
-    return new_memory.summary

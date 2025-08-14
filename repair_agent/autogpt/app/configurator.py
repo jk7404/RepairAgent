@@ -11,7 +11,6 @@ from autogpt.config import Config
 from autogpt.config.config import GPT_3_MODEL, GPT_4_MODEL
 from autogpt.llm.api_manager import ApiManager
 from autogpt.logs import logger
-from autogpt.memory.vector import get_supported_memory_backends
 
 
 def create_config(
@@ -102,19 +101,6 @@ def create_config(
         config.fast_llm = check_model(config.fast_llm, "fast_llm", config=config)
         config.smart_llm = check_model(config.smart_llm, "smart_llm", config=config)
         
-    if memory_type:
-        supported_memory = get_supported_memory_backends()
-        chosen = memory_type
-        if chosen not in supported_memory:
-            logger.typewriter_log(
-                "ONLY THE FOLLOWING MEMORY BACKENDS ARE SUPPORTED: ",
-                Fore.RED,
-                f"{supported_memory}",
-            )
-            logger.typewriter_log("Defaulting to: ", Fore.YELLOW, config.memory_backend)
-        else:
-            config.memory_backend = chosen
-
     if skip_reprompt:
         logger.typewriter_log("Skip Re-prompt: ", Fore.GREEN, "ENABLED")
         config.skip_reprompt = True

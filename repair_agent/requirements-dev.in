@@ -1,0 +1,30 @@
+# Include the core dependencies
+-r requirements.in
+
+# Code Quality & Formatting
+coverage
+flake8
+black
+isort
+mypy
+pre-commit
+
+# Typing Stubs
+types-Markdown
+types-beautifulsoup4
+types-colorama
+types-Pillow
+
+# Documentation
+mkdocs
+mkdocs-material
+mkdocs-table-reader-plugin
+pymdown-extensions
+
+# Git & Plugins
+gitpython
+auto-gpt-plugin-template @ git+https://github.com/Significant-Gravitas/Auto-GPT-Plugin-Template@0.1.0
+
+# Other Dev/Experimentation Tools
+whatthepatch
+numpy # Often used in dev/testing/data-science, but can be moved to requirements.in if it's a core dependency

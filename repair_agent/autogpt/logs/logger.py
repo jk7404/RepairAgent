@@ -101,13 +101,6 @@ class Logger(metaclass=Singleton):
         speak_text: bool = False,
         level: int = logging.INFO,
     ) -> None:
-        from autogpt.speech import say_text
-
-        if speak_text and self.config and self.config.speak_mode:
-            say_text(f"{title}. {content}", self.config)
-
-        for plugin in self.chat_plugins:
-            plugin.report(f"{title}. {content}")
 
         if content:
             if isinstance(content, list):

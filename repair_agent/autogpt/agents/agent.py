@@ -9,13 +9,11 @@ from typing import TYPE_CHECKING, Any, Optional
 if TYPE_CHECKING:
     from autogpt.config import AIConfig, Config
     from autogpt.llm.base import ChatModelResponse, ChatSequence
-    from autogpt.memory.vector import VectorMemory
     from autogpt.models.command_registry import CommandRegistry
 
 from autogpt.json_utils.utilities import extract_dict_from_response, validate_dict
 from autogpt.llm.api_manager import ApiManager
 from autogpt.llm.base import Message
-from autogpt.llm.utils import count_string_tokens
 from autogpt.logs import logger
 from autogpt.logs.log_cycle import (
     CURRENT_CONTEXT_FILE_NAME,
@@ -25,9 +23,9 @@ from autogpt.logs.log_cycle import (
     LogCycleHandler,
 )
 from autogpt.workspace import Workspace
-from autogpt.commands.defects4j_static import query_for_mutants, construct_fix_command, get_detailed_list_of_buggy_lines
+from autogpt.commands.defects4j_static import construct_fix_command, get_detailed_list_of_buggy_lines
 
-from .base import AgentThoughts, BaseAgent, CommandArgs, CommandName
+from .base import AgentThoughts, BaseAgent, CommandArgs, CommandName, query_for_mutants
 
 
 class Agent(BaseAgent):
@@ -37,7 +35,6 @@ class Agent(BaseAgent):
         self,
         ai_config: AIConfig,
         command_registry: CommandRegistry,
-        memory: VectorMemory,
         triggering_prompt: str,
         config: Config,
         cycle_budget: Optional[int] = None,
@@ -51,9 +48,6 @@ class Agent(BaseAgent):
             cycle_budget=cycle_budget,
             experiment_file = experiment_file
         )
-
-        self.memory = memory
-        """VectorMemoryProvider used to manage the agent's context (TODO)"""
 
         self.workspace = Workspace(config.workspace_path, config.restrict_to_workspace)
         """Workspace that the agent has access to, e.g. for reading/writing files."""
@@ -107,7 +101,7 @@ class Agent(BaseAgent):
             self.ai_config.ai_name,
             self.created_at,
             self.cycle_count,
-            self.history.raw(),
+            self.history,
             FULL_MESSAGE_HISTORY_FILE_NAME,
         )
         self.log_cycle_handler.log_cycle(
@@ -152,37 +146,26 @@ class Agent(BaseAgent):
                 result = f"Command {command_name} returned: " f"{command_result}"
             else:
                 result = f"Command {command_name} returned a lengthy response, we truncated it to the first 4000 characters: " f"{str(command_result)[:4000]}"
-            result_tlength = count_string_tokens(str(command_result), self.llm.name)
-            memory_tlength = count_string_tokens(
-                str(self.history.summary_message()), self.llm.name
-            )
-            if result_tlength + memory_tlength > self.send_token_limit:
-                result = f"Failure: command {command_name} returned too much output. \
-                    Do not execute this command again with the same arguments."
-
-            for plugin in self.config.plugins:
-                if not plugin.can_handle_post_command():
-                    continue
-                result = plugin.post_command(command_name, result)
+            
         # Check if there's a result from the command append it to the message
         if result is None:
-            self.history.add("user", "Unable to execute command", "action_result")
+            self.history.append({"role": "user", "content": "Unable to execute command", "type": "action_result"})
         else:
-            self.history.add("user", result, "action_result")
+            self.history.append({"role": "user", "content": result, "type": "action_result"})
 
         return result
 
 
     def parse_and_process_response(
-        self, llm_response: ChatModelResponse, *args, **kwargs
+        self, llm_response: str, *args, **kwargs
     ) -> tuple[CommandName | None, CommandArgs | None, AgentThoughts]:
-        if not llm_response.content:
+        if not llm_response:
             raise SyntaxError("Assistant response has no text content")
 
         exps = self.exps
         with open(os.path.join("experimental_setups", exps[-1], "responses", "model_responses_{}_{}".format(self.project_name, self.bug_index)), "a+") as patf:
-            patf.write(llm_response.content)
-        assistant_reply_dict = extract_dict_from_response(llm_response.content)
+            patf.write(llm_response)
+        assistant_reply_dict = extract_dict_from_response(llm_response)
 
         if not isinstance(assistant_reply_dict, dict):
             raise SyntaxError(
@@ -323,7 +306,7 @@ class Agent(BaseAgent):
 
 
 def extract_command(
-    assistant_reply_json: dict, assistant_reply: ChatModelResponse, config: Config
+    assistant_reply_json: dict, assistant_reply: str, config: Config
 ) -> tuple[str, dict[str, str]]:
     """Parse the response and return the command name and arguments
 
@@ -340,13 +323,6 @@ def extract_command(
 
         Exception: If any other error occurs
     """
-    if config.openai_functions:
-        if assistant_reply.function_call is None:
-            return "Error:", {"message": "No 'function_call' in assistant reply"}
-        assistant_reply_json["command"] = {
-            "name": assistant_reply.function_call.name,
-            "args": json.loads(assistant_reply.function_call.arguments),
-        }
     try:
         if "command" not in assistant_reply_json:
             return "Error:", {"message": "Missing 'command' object in JSON"}

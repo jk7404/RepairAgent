@@ -12,13 +12,14 @@ if TYPE_CHECKING:
     from autogpt.models.command_registry import CommandRegistry
 
 from autogpt.llm.base import ChatModelResponse, ChatSequence, Message
-from autogpt.llm.providers.openai import OPEN_AI_CHAT_MODELS, get_openai_command_specs
-from autogpt.llm.utils import count_message_tokens, create_chat_completion
+from autogpt.llm.utils import create_chat_completion, ask_chatgpt
 from autogpt.logs import logger
-from autogpt.memory.message_history import MessageHistory
 from autogpt.prompts.prompt import DEFAULT_TRIGGERING_PROMPT
 from autogpt.json_utils.utilities import extract_dict_from_response
-from autogpt.commands.defects4j_static import get_info, run_tests, query_for_fix, query_for_commands, extract_command, execute_command, create_fix_template
+from autogpt.commands.defects4j_static import get_info, run_tests, extract_command, execute_command, create_fix_template
+
+from openai import OpenAI
+from google import genai
 
 CommandName = str
 CommandArgs = dict[str, str]
@@ -102,20 +103,7 @@ class BaseAgent(metaclass=ABCMeta):
         available resources, and restrictions.
         """
 
-        llm_name = self.config.smart_llm if self.big_brain else self.config.fast_llm
-        self.llm = OPEN_AI_CHAT_MODELS[llm_name]
-        """The LLM that the agent uses to think."""
-
-        self.send_token_limit = send_token_limit or self.llm.max_tokens * 3 / 4
-        """
-        The token limit for prompt construction. Should leave room for the completion;
-        defaults to 75% of `llm.max_tokens`.
-        """
-
-        self.history = MessageHistory(
-            self.llm,
-            max_summary_tlength=summary_max_tlength or self.send_token_limit // 6,
-        )
+        self.history = []
 
         # These are new attributes used to construct the prompt
         """
@@ -216,7 +204,7 @@ class BaseAgent(metaclass=ABCMeta):
             "extracted_methods": self.extracted_methods,
             "experiment_file": self.experiment_file,
             "hyperparams": self.hyperparams,
-            "history": [{"role": msg.role, "content": msg.content} for _, msg in enumerate(self.history)]
+            "history": [{"role": msg["role"], "content": msg["content"]} for _, msg in enumerate(self.history)]
         }
 
         #with open("experimental_setups/experiments_list.txt") as eht:
@@ -355,7 +343,7 @@ please use the indicated format and produce a list, like this:
         #with open("assistant_output_from_command_repetition.json", "w") as aocr:
         #    json.dump(assistant_outputs+[str(ref_cmd["command"])], aocr)
         try:
-            assistant_outputs = [str(extract_dict_from_response(msg.content)["command"]) for msg in self.history if msg.role == "assistant"]
+            assistant_outputs = [str(extract_dict_from_response(msg["content"])["command"]) for msg in self.history if msg["role"] == "assistant"]
             if str(ref_cmd["command"]) in assistant_outputs:
                 logger.info("WARNING: REPETITION DETECTED!\n\n")
                 return True
@@ -389,8 +377,8 @@ please use the indicated format and produce a list, like this:
                 continue
             skip_next = False
             msg = messages_history[i]
-            if msg.role == "assistant":
-                command_dict = extract_dict_from_response(msg.content)
+            if msg["role"] == "assistant":
+                command_dict = extract_dict_from_response(msg["content"])
                 if not self.validate_command_parsing(command_dict):
                     continue
                 if command_dict["command"]["name"] == command_name:
@@ -399,7 +387,7 @@ please use the indicated format and produce a list, like this:
                     if i < len(messages_history) - 1:
                         j = i + 1
                         next_msg = messages_history[j]
-                        read_result = next_msg.content
+                        read_result = next_msg["content"]
                         skip_next= True
                     if read_result:
                         if file_path in read_files:
@@ -425,8 +413,8 @@ please use the indicated format and produce a list, like this:
                 continue
             skip_next = False
             msg = messages_history[i]
-            if msg.role == "assistant":
-                command_dict = extract_dict_from_response(msg.content)
+            if msg["role"] == "assistant":
+                command_dict = extract_dict_from_response(msg["content"])
                 if not self.validate_command_parsing(command_dict):
                     continue
                 if command_dict["command"]["name"] == command_name:
@@ -434,7 +422,7 @@ please use the indicated format and produce a list, like this:
                     if i < len(messages_history) - 1:
                         j = i + 1
                         next_msg = messages_history[j]
-                        gen_result = next_msg.content
+                        gen_result = next_msg["content"]
                         skip_next= True
                     if gen_result:
                         self.generated_methods = (method_name, gen_result)
@@ -448,8 +436,8 @@ please use the indicated format and produce a list, like this:
         commands_history = []
         for i in range(len(messages_history)):
             msg = messages_history[i]
-            if msg.role == "assistant" and not msg.content.startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
-                command_dict = extract_dict_from_response(msg.content)
+            if msg["role"] == "assistant" and not msg["content"].startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
+                command_dict = extract_dict_from_response(msg["content"])
                 try:
                     commands_history.append(command_dict["command"]["name"] + " , Your reasoning for calling this command was: '{}'".format(
                             command_dict["thoughts"]
@@ -468,8 +456,8 @@ please use the indicated format and produce a list, like this:
                 continue
             skip_next = False
             msg = messages_history[i]
-            if msg.role == "assistant":
-                command_dict = extract_dict_from_response(msg.content)
+            if msg["role"] == "assistant":
+                command_dict = extract_dict_from_response(msg["content"])
                 if not self.validate_command_parsing(command_dict):
                     continue
                 if command_dict["command"]["name"] in command_names:
@@ -488,9 +476,9 @@ please use the indicated format and produce a list, like this:
         messages_history = [msg for _, msg in enumerate(self.history)]
         for i in range(len(messages_history)):
             msg = messages_history[i]
-            if msg.role == "system":
-                if msg.content.startswith("Human feedback"):
-                    human_feedback.append(msg.content)
+            if msg["role"] == "system":
+                if msg["content"].startswith("Human feedback"):
+                    human_feedback.append(msg["content"])
         self.human_feedback = human_feedback
 
     def construct_unknown_commands(self,):
@@ -502,16 +490,16 @@ please use the indicated format and produce a list, like this:
                 continue
             skip_next = False
             msg = messages_history[i]
-            if msg.role == "assistant" and not msg.content.startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
+            if msg["role"] == "assistant" and not msg["content"].startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
                 try:
-                    command_dict = extract_dict_from_response(msg.content)
+                    command_dict = extract_dict_from_response(msg["content"])
                     command_name = command_dict["command"]["name"]
                     
                     if i < len(messages_history) - 1:
                         j = i + 1
                         next_msg = messages_history[j]
-                        if next_msg.role == "user":
-                            if "unknown command. Do not try to use this command again." in next_msg.content:
+                        if next_msg["role"] == "user":
+                            if "unknown command. Do not try to use this command again." in next_msg["content"]:
                                 if command_name not in unknown_commands:
                                     unknown_commands.append(command_name)
                 except:
@@ -529,8 +517,8 @@ please use the indicated format and produce a list, like this:
                 continue
             skip_next = False
             msg = messages_history[i]
-            if msg.role == "assistant" and not msg.content.startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
-                command_dict = extract_dict_from_response(msg.content)
+            if msg["role"] == "assistant" and not msg["content"].startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
+                command_dict = extract_dict_from_response(msg["content"])
                 if not self.validate_command_parsing(command_dict):
                     continue
                 if command_dict["command"]["name"] == command_name:
@@ -538,7 +526,7 @@ please use the indicated format and produce a list, like this:
                     if i < len(messages_history) - 1:
                         j = i + 1
                         next_msg = messages_history[j]
-                        search_result = next_msg.content
+                        search_result = next_msg["content"]
                         skip_next= True
                     if search_result:
                         search_queries.append({
@@ -558,8 +546,8 @@ please use the indicated format and produce a list, like this:
                 continue
             skip_next = False
             msg = messages_history[i]
-            if msg.role == "assistant" :
-                command_dict = extract_dict_from_response(msg.content)
+            if msg["role"] == "assistant" :
+                command_dict = extract_dict_from_response(msg["content"])
                 if not self.validate_command_parsing(command_dict):
                     continue
                 if command_dict["command"]["name"] == command_name:
@@ -568,7 +556,7 @@ please use the indicated format and produce a list, like this:
                     if i < len(messages_history) - 1:
                         j = i + 1
                         next_msg = messages_history[j]
-                        search_result = next_msg.content
+                        search_result = next_msg["content"]
                         skip_next= True
                     if search_result:
                         search_queries.append({
@@ -589,8 +577,8 @@ please use the indicated format and produce a list, like this:
                 continue
             skip_next = False
             msg = messages_history[i]
-            if msg.role == "assistant" :
-                command_dict = extract_dict_from_response(msg.content)
+            if msg["role"] == "assistant" :
+                command_dict = extract_dict_from_response(msg["content"])
                 if not self.validate_command_parsing(command_dict):
                     continue
                 if command_dict["command"]["name"] == command_name:
@@ -599,7 +587,7 @@ please use the indicated format and produce a list, like this:
                     if i < len(messages_history) - 1:
                         j = i + 1
                         next_msg = messages_history[j]
-                        search_result = next_msg.content
+                        search_result = next_msg["content"]
                         skip_next= True
                     if search_result:
                         search_queries.append({
@@ -611,44 +599,18 @@ please use the indicated format and produce a list, like this:
 
     def construct_bug_report(self):
         messages_history = [msg for _, msg in enumerate(self.history)]
-        """
-        for i in range(len(messages_history)):
-            msg = messages_history[i]
-            if msg.role == "assistant" and not msg.content.startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
-                command_dict = extract_dict_from_response(msg.content)
-                if command_dict["command"]["name"] == "get_info":
-                    if i < len(messages_history) - 1:
-                        j = i + 1
-                        next_msg = messages_history[j]
-                        get_info = next_msg.content
-                        self.prompt_dictionary["commands"][2].replace("2. get_info: Gets info about a specific bug in a specific project, params: (name: string, index: integer). This command can only be executed once\n", "")
-                        break
-        """
-        """
-        for i in range(len(messages_history)):
-            msg = messages_history[i]
-            if msg.role == "assistant" and not msg.content.startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
-                command_dict = extract_dict_from_response(msg.content)
-                if command_dict["command"]["name"] == "run_tests":
-                    if i < len(messages_history) - 1:
-                        j = i + 1
-                        next_msg = messages_history[j]
-                        run_tests = next_msg.content
-                        self.prompt_dictionary["commands"][2].replace("3. run_tests: Runs the test cases of the project being analyzed, params: (name: string, index: integer). This command can only be executed once.\n", "")
-                        break
-        """
         failing_test_code = ""
         for i in range(len(messages_history)):
-            msg = messages_history[i]    
-            if msg.role == "assistant" and not msg.content.startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
-                command_dict = extract_dict_from_response(msg.content)
+            msg = messages_history[i]
+            if msg["role"] == "assistant" and not msg["content"].startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
+                command_dict = extract_dict_from_response(msg["content"])
                 if not self.validate_command_parsing(command_dict):
                     continue
                 if command_dict["command"]["name"] == "extract_test_code":
                     if i < len(messages_history) - 1:
                         j = i + 1
                         next_msg = messages_history[j]
-                        failing_test_code += "Extracting test code from file {} returned: ".format(command_dict["command"]["args"]["test_file_path"]) + next_msg.content + "\n"
+                        failing_test_code += "Extracting test code from file {} returned: ".format(command_dict["command"]["args"]["test_file_path"]) + next_msg["content"] + "\n"
 
         if get_info or run_tests or failing_test_code:
             self.bug_report = {"get_info": "No longer needed for this version", "run_tests": "No longer needed for this version", "failing_test_code": failing_test_code}
@@ -659,8 +621,8 @@ please use the indicated format and produce a list, like this:
         messages_history = [msg for _, msg in enumerate(self.history)]
         for i in range(len(messages_history)):
             msg = messages_history[i]
-            if msg.role == "assistant" and not msg.content.startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
-                command_dict = extract_dict_from_response(msg.content)
+            if msg["role"] == "assistant" and not msg["content"].startswith("## As RepairAgentv0.5.0, this is the last command I have called in response to the users' input"):
+                command_dict = extract_dict_from_response(msg["content"])
                 if not self.validate_command_parsing(command_dict):
                     continue
                 if command_dict["command"]["name"] == "express_hypothesis":
@@ -682,17 +644,17 @@ please use the indicated format and produce a list, like this:
         """
         
         for i in range(len(self.history)-1, 0, -1):
-            if self.history[i].role == "assistant":
-                if "Hypothesis discarded! You are now back at the state 'collect information to understand the bug'" in self.history[i+1].content:
+            if self.history[i]["role"] == "assistant":
+                if "Hypothesis discarded! You are now back at the state 'collect information to understand the bug'" in self.history[i+1]["content"]:
                     if self.current_state != "collect information to understand the bug":
                         self.update_prompt_state("collect information to understand the bug")
-                elif "You are now back at the state 'collect information to fix the bug'" in self.history[i+1].content:
+                elif "You are now back at the state 'collect information to fix the bug'" in self.history[i+1]["content"]:
                     if self.current_state != "collect information to fix the bug":
                         self.update_prompt_state("collect information to fix the bug")
-                elif "Since you have a hypothesis about the bug, the current state have been changed from 'collect information to understand the bug' to 'collect information to fix the bug'" in self.history[i+1].content:
+                elif "Since you have a hypothesis about the bug, the current state have been changed from 'collect information to understand the bug' to 'collect information to fix the bug'" in self.history[i+1]["content"]:
                     if self.current_state != "collect information to fix the bug":
                         self.update_prompt_state("collect information to fix the bug")
-                elif "\n **Note:** You are automatically switched to the state 'trying out candidate fixes'" in self.history[i+1].content:
+                elif "\n **Note:** You are automatically switched to the state 'trying out candidate fixes'" in self.history[i+1]["content"]:
                     if self.current_state != "trying out candidate fixes":
                         self.update_prompt_state("trying out candidate fixes")
                 break
@@ -919,14 +881,22 @@ please use the indicated format and produce a list, like this:
         Returns:
             The command name and arguments, if any, and the agent's thoughts.
         """
-
+        
+        if "google" in self.config.openai_api_base:
+            client = genai.Client(api_key=self.config.openai_api_key)
+        elif "" == self.config.openai_api_base:
+            client = OpenAI(api_key=self.config.openai_api_key)
+        else:
+            client = OpenAI(
+                api_key=self.config.openai_api_key,
+                base_url=self.config.openai_api_base,
+            )
+        
         instruction = instruction or self.default_cycle_instruction
 
-        prompt: ChatSequence = self.construct_prompt(instruction, thought_process_id)
-        prompt = self.on_before_think(prompt, thought_process_id, instruction)
+        prompt_text: str = self.construct_prompt(instruction, thought_process_id)
         
         ## This is a line added by me to save prompts at each step
-        prompt_text = prompt.dump()
         start_i = prompt_text.find("bug within the project")
         end_i = prompt_text.find(".\n2.")
         in_between = prompt_text[start_i:end_i]
@@ -934,7 +904,7 @@ please use the indicated format and produce a list, like this:
 
         exps = self.exps
         with open(os.path.join("experimental_setups", exps[-1], "logs", "prompt_history_{}_{}".format(project_name, bug_index)), "a+") as patf:
-            patf.write(prompt.dump())
+            patf.write(prompt_text)
         
         # handle querying strategy
         # For now, we do not evaluate the external query
@@ -942,35 +912,31 @@ please use the indicated format and produce a list, like this:
         if self.hyperparams["external_fix_strategy"] != 0:
             if self.cycle_count % self.hyperparams["external_fix_strategy"] == 0:
                 query = self.construct_fix_query()
-                suggested_fixes = query_for_fix(query, )
+                suggested_fixes = query_for_fix(query)
                 self.save_to_json(os.path.join("experimental_setups", exps[-1], "external_fixes", "external_fixes_{}_{}.json".format(project_name, bug_index)), json.loads(suggested_fixes))
 
         raw_response = create_chat_completion(
-            prompt,
-            self.config,
-            functions=get_openai_command_specs(self.command_registry)
-            if self.config.openai_functions
-            else None,
+            client,
+            prompt_text,
+            self.config.llm_model,
         )
         
         try:
             response_dict = extract_dict_from_response(
-                raw_response.content
+                raw_response
             )
             repetition = self.detect_command_repetition(response_dict)
             if repetition:
                 logger.info("WARNING: REPETITION DETECTED!\n")
                 logger.info(str(self.handle_command_repitition(response_dict, self.hyperparams["repetition_handling"])) + "\n\n")
-                prompt.extend([Message("user", self.handle_command_repitition(response_dict, self.hyperparams["repetition_handling"]))])
+                prompt_text += self.handle_command_repitition(response_dict, self.hyperparams["repetition_handling"])
                 new_response = create_chat_completion(
-                        prompt,
-                        self.config,
-                        functions=get_openai_command_specs(self.command_registry)
-                        if self.config.openai_functions
-                        else None,
+                        client,
+                        prompt_text,
+                        self.config.llm_model,
                     )
                 if self.hyperparams["repetition_handling"] == "TOP3":
-                    top3_list = json.loads(new_response.content)
+                    top3_list = json.loads(new_response)
                     for r in top3_list:
                         repetition = self.detect_command_repetition(r)
                         if not repetition:
@@ -979,9 +945,9 @@ please use the indicated format and produce a list, like this:
                     raw_response = new_response
             self.cycle_count += 1
 
-            return self.on_response(raw_response, thought_process_id, prompt, instruction)
+            return self.on_response(raw_response, thought_process_id, prompt_text, instruction)
         except SyntaxError as e:
-            return self.on_response(raw_response, thought_process_id, prompt, instruction)
+            return self.on_response(raw_response, thought_process_id, prompt_text, instruction)
         
     @abstractmethod
     def execute(
@@ -1008,7 +974,7 @@ please use the indicated format and produce a list, like this:
         prepend_messages: list[Message] = [],
         append_messages: list[Message] = [],
         reserve_tokens: int = 0,
-    ) -> ChatSequence:
+    ) -> str:
         """Constructs and returns a prompt with the following structure:
         1. System prompt
         2. `prepend_messages`
@@ -1057,9 +1023,7 @@ please use the indicated format and produce a list, like this:
                 cycle_instruction += "\nBecause of budget constaints, you were forced to transition to the state 'collect information to fix the bug'" 
 
         context_prompt = self.construct_context_prompt()
-        prompt = ChatSequence.for_model(
-            self.llm.name,
-            [Message("system", self.prompt_dictionary["role"])])
+        prompt = self.prompt_dictionary["role"]
         
         definitions_prompt = ""
         static_sections_names = ["goals", "current state", "commands", "general guidelines"]
@@ -1072,11 +1036,8 @@ please use the indicated format and produce a list, like this:
                 definitions_prompt += self.prompt_dictionary[key] + "\n"
             else:
                 raise TypeError("For now we only support list and str types.")
-            
-        prompt.extend(ChatSequence.for_model(
-            self.llm.name,
-            [Message("user", definitions_prompt + "\n" + context_prompt + "\n\n" + cycle_instruction)] + prepend_messages,
-        ))
+
+        prompt += definitions_prompt + "\n" + context_prompt + "\n\n" + cycle_instruction + "\n" + "\n".join(prepend_messages)
         #prompt.append(Message("user", context_prompt))
         
         ## The following is the original code, uncomment when needed to roll back
@@ -1099,14 +1060,15 @@ please use the indicated format and produce a list, like this:
 
         """
         if len(self.history) > 2:
-            last_command = self.history[-2]
-            command_result = self.history[-1]
-            last_command_section = "{}\n".format(last_command.content)
+            last_command = self.history[-2]["content"]
+            command_result = self.history[-1]["content"]
+            last_command_section = "{}\n".format(last_command)
             append_messages.append(Message("assistant", last_command_section))
-            result_last_command = "The result of executing that last command is:\n {}".format(command_result.content)
+            result_last_command = "The result of executing that last command is:\n {}".format(command_result)
             append_messages.append((Message("user", result_last_command)))
         if append_messages:
-            prompt.extend(append_messages)
+            for msg in append_messages:
+                prompt += msg.content + "\n"
 
         return prompt
 
@@ -1114,7 +1076,7 @@ please use the indicated format and produce a list, like this:
         self,
         cycle_instruction: str,
         thought_process_id: ThoughtProcessID,
-    ) -> ChatSequence:
+    ) -> str:
         """Constructs and returns a prompt with the following structure:
         1. System prompt
         2. Message history of the agent, truncated & prepended with running summary as needed
@@ -1209,50 +1171,11 @@ please use the indicated format and produce a list, like this:
             f"{response_format}\n"
         )
 
-    def on_before_think(
-        self,
-        prompt: ChatSequence,
-        thought_process_id: ThoughtProcessID,
-        instruction: str,
-    ) -> ChatSequence:
-        """Called after constructing the prompt but before executing it.
-
-        Calls the `on_planning` hook of any enabled and capable plugins, adding their
-        output to the prompt.
-
-        Params:
-            instruction: The instruction for the current cycle, also used in constructing the prompt
-
-        Returns:
-            The prompt to execute
-        """
-        current_tokens_used = prompt.token_length
-        plugin_count = len(self.config.plugins)
-        for i, plugin in enumerate(self.config.plugins):
-            if not plugin.can_handle_on_planning():
-                continue
-            plugin_response = plugin.on_planning(
-                self.ai_config.prompt_generator, prompt.raw()
-            )
-            if not plugin_response or plugin_response == "":
-                continue
-            message_to_add = Message("system", plugin_response)
-            tokens_to_add = count_message_tokens(message_to_add, self.llm.name)
-            if current_tokens_used + tokens_to_add > self.send_token_limit:
-                logger.debug(f"Plugin response too long, skipping: {plugin_response}")
-                logger.debug(f"Plugins remaining at stop: {plugin_count - i}")
-                break
-            prompt.insert(
-                -1, message_to_add
-            )  # HACK: assumes cycle instruction to be at the end
-            current_tokens_used += tokens_to_add
-        return prompt
-
     def on_response(
         self,
         llm_response: ChatModelResponse,
         thought_process_id: ThoughtProcessID,
-        prompt: ChatSequence,
+        prompt: str,
         instruction: str,
     ) -> tuple[CommandName | None, CommandArgs | None, AgentThoughts]:
         """Called upon receiving a response from the chat model.
@@ -1270,10 +1193,11 @@ please use the indicated format and produce a list, like this:
         """
 
         # Save assistant reply to message history
-        self.history.append(prompt[-1])
-        self.history.add(
-            "assistant", llm_response.content, "ai_response"
-        )  # FIXME: support function calls
+        self.history.append({
+            "role": "user",
+            "content": llm_response,
+            "type": "action_result"
+        })
 
         try:
             return self.parse_and_process_response(
@@ -1282,23 +1206,22 @@ please use the indicated format and produce a list, like this:
         except SyntaxError as e:
             logger.error(f"Response could not be parsed: {e}")
             with open("parsing_erros_responses.txt", "a") as pers:
-                pers.write(llm_response.content+"\n")
+                pers.write(llm_response+"\n")
             # TODO: tune this message
-            self.history.add(
-                "system",
-                f"Your response could not be parsed."
+            self.history.append({
+                "role": "user",
+                "content": f"Your response could not be parsed."
                 "\n\nRemember to only respond using the specified format above!",
-            )
+                "type": "action_result"
+            })
             return None, None, {}
-
-        # TODO: update memory/context
 
     @abstractmethod
     def parse_and_process_response(
         self,
-        llm_response: ChatModelResponse,
+        llm_response: str,
         thought_process_id: ThoughtProcessID,
-        prompt: ChatSequence,
+        prompt: str,
         instruction: str,
     ) -> tuple[CommandName | None, CommandArgs | None, AgentThoughts]:
         """Validate, parse & process the LLM's response.
@@ -1316,26 +1239,23 @@ please use the indicated format and produce a list, like this:
         """
         pass
 
+def query_for_fix(query):
+    content="You are an automated program repair agent who suggests fixes to given bugs." +\
+            "Particularly, you will be given some information about a bug." +\
+            "Your task is to suggest a list of possible fixes for the given bug. Usually, the given information contains an approximate location of the bug. Respect the fix format described below. Output a json parsable output enclosed in a list." +\
+            query
+    return ask_chatgpt(content)
 
-def add_history_upto_token_limit(
-    prompt: ChatSequence, history: MessageHistory, t_limit: int
-) -> list[Message]:
-    current_prompt_length = prompt.token_length
-    insertion_index = len(prompt)
-    limit_reached = False
-    trimmed_messages: list[Message] = []
-    for cycle in reversed(list(history.per_cycle())):
-        messages_to_add = [msg for msg in cycle if msg is not None]
-        tokens_to_add = count_message_tokens(messages_to_add, prompt.model.name)
-        if current_prompt_length + tokens_to_add > t_limit:
-            limit_reached = True
+def query_for_mutants(query):
+    content="You are a code assitant and program repair agent who suggests fixes to given bugs." +\
+            "Particularly, you will be given some information about a bug." +\
+            "Your task is to suggest a list of possible mutations of the buggy code. Probably mutating it a little bit would fix the bug."+\
+            "Use the information that I give you and also your general knowledge of similar code snippets or bug fixes that you know of."+\
+            "Respect the fix format, described below, for every mutant that you generate."+\
+            query
+    return ask_chatgpt(content)
 
-        if not limit_reached:
-            # Add the most recent message to the start of the chain,
-            #  after the system prompts.
-            prompt.insert(insertion_index, *messages_to_add)
-            current_prompt_length += tokens_to_add
-        else:
-            trimmed_messages = messages_to_add + trimmed_messages
-
-    return trimmed_messages
+def query_for_commands(query):
+    content="I have a set of functions that help me analyze and repair buggy code. I will give you the description of the functions (I also call them commands), and the buggy piece of code and tell me what commands would make sense to call to get more info about the bug."+\
+            query
+    return ask_chatgpt(content)

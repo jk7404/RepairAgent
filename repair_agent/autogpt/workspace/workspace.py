@@ -9,6 +9,7 @@ agent.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -156,7 +157,7 @@ class Workspace:
         config: Config, override_workspace_path: Optional[str | Path] = None
     ) -> Path:
         if override_workspace_path is None:
-            workspace_path = config.workdir / "auto_gpt_workspace"
+            workspace_path = os.path.join(config.workdir, "auto_gpt_workspace")
         elif type(override_workspace_path) == str:
             workspace_path = Path(override_workspace_path)
         else:

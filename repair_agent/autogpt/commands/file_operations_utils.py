@@ -7,7 +7,6 @@ import markdown
 import PyPDF2
 import yaml
 from bs4 import BeautifulSoup
-from pylatexenc.latex2text import LatexNodes2Text
 
 from autogpt import logs
 from autogpt.logs import logger
